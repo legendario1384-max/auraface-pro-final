@@ -279,7 +279,7 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
         backgroundColor: const Color(0xFF111827),
         title: Row(
           children: [
-            const Icon(Icons.auto_Fix_high, color: Color(0xFFA78BFA)),
+            const Icon(Icons.auto_fix_high, color: Color(0xFFA78BFA)),
             const SizedBox(width: 10),
             const Text('AuraFace ', style: TextStyle(fontWeight: FontWeight.bold)),
             Container(
