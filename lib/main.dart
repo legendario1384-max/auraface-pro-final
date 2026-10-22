@@ -72,7 +72,6 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
   if (baseImage == null) return job.sourceBytes;
 
   img.Image working = baseImage;
-  // Optimización: Reducir tamaño para procesamiento rápido en móviles
   if (baseImage.width > 1000 || baseImage.height > 1000) {
     working = img.copyResize(
       baseImage,
@@ -85,20 +84,19 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
   final int w = working.width;
   final int h = working.height;
   
-  // Usar el punto tocado por el usuario, o el centro por defecto
   final double tX = job.targetX >= 0 ? job.targetX * w : w / 2.0;
   final double tY = job.targetY >= 0 ? job.targetY * h : h / 2.0;
 
   switch (job.filter) {
     case ProFilter.youngPro:
       final int radius = (2 + (job.intensity * 4)).round();
-      final img.Image blurred = img.gaussianBlur(working, radius: radius);
+      final img.Image blurred = img.gaussianBlur(img.Image.from(working), radius: radius);
       for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
           final pOrig = working.getPixel(x, y);
           final pBlur = blurred.getPixel(x, y);
-          // Mezcla de suavizado conservando bordes (simulación básica de filtro bilateral)
-          final num luma = pOrig.getLuminance();
+          // Cálculo manual de Luminancia corregido
+          final double luma = (0.299 * pOrig.r + 0.587 * pOrig.g + 0.114 * pOrig.b);
           final double blend = job.intensity * (luma > 80 ? 0.8 : 0.2);
           final int r = (pOrig.r * (1.0 - blend) + pBlur.r * blend).round().clamp(0, 255);
           final int g = (pOrig.g * (1.0 - blend) + pBlur.g * blend).round().clamp(0, 255);
@@ -110,12 +108,8 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
       break;
 
     case ProFilter.agingPro:
-      final List<num> highPassKernel = [
-        0, -1, 0,
-        -1, 5, -1,
-        0, -1, 0,
-      ];
-      final img.Image sharp = img.convolution(working, filter: highPassKernel, div: 1.0);
+      final List<num> highPassKernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+      final img.Image sharp = img.convolution(img.Image.from(working), filter: highPassKernel, div: 1.0);
       for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
           final pOrig = working.getPixel(x, y);
@@ -130,11 +124,11 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
       img.adjustColor(processed, contrast: 1.0 + (0.2 * job.intensity), saturation: 1.0 - (0.4 * job.intensity));
       break;
 
-    case ProFilter.thinFace: // Pinch (Adelgazar)
-    case ProFilter.fatFace:  // Bulge (Engordar)
+    case ProFilter.thinFace:
+    case ProFilter.fatFace:
       final bool isThin = job.filter == ProFilter.thinFace;
-      final double radius = math.min(w, h) * (isThin ? 0.4 : 0.35); // Radio de afección
-      final double strength = job.intensity * (isThin ? 0.6 : -0.5); // Positivo atrae, Negativo repele
+      final double radius = math.min(w, h) * (isThin ? 0.4 : 0.35);
+      final double strength = job.intensity * (isThin ? 0.6 : -0.5);
 
       for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
@@ -144,13 +138,12 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
 
           if (distance < radius && distance > 0) {
             double percent = distance / radius;
-            // Algoritmo de lente de deformación
             double power = isThin ? (1.0 + strength * (1.0 - percent)) : (1.0 + strength * math.sin(percent * math.pi));
             
-            double srcX = tX + dx * math.pow(percent, power) * (radius/distance);
-            double srcY = tY + dy * math.pow(percent, power) * (radius/distance);
+            int srcX = (tX + dx * math.pow(percent, power) * (radius/distance)).round().clamp(0, w - 1);
+            int srcY = (tY + dy * math.pow(percent, power) * (radius/distance)).round().clamp(0, h - 1);
             
-            final p = working.getPixelSafe(srcX.round(), srcY.round());
+            final p = working.getPixel(srcX, srcY);
             processed.setPixelRgb(x, y, p.r, p.g, p.b);
           } else {
             final p = working.getPixel(x, y);
@@ -171,13 +164,12 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
           final double distance = math.sqrt(dx * dx + dy * dy);
           
           if (distance < radius) {
-            // Curvar hacia arriba (restar a Y) basado en qué tan lejos del centro horizontal esté
             double curve = math.sin((dx.abs() / radius) * math.pi);
             double verticalFalloff = 1.0 - (dy.abs() / radius);
             double offsetY = lift * curve * verticalFalloff;
             
-            int srcY = (y + offsetY).round();
-            final p = working.getPixelSafe(x, srcY);
+            int srcY = (y + offsetY).round().clamp(0, h - 1);
+            final p = working.getPixel(x, srcY);
             processed.setPixelRgb(x, y, p.r, p.g, p.b);
           } else {
             final p = working.getPixel(x, y);
@@ -187,16 +179,15 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
       }
       break;
 
-    case ProFilter.cinemaGlam: // Teal and Orange
+    case ProFilter.cinemaGlam:
       for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
           final p = working.getPixel(x, y);
-          // Separar luces y sombras
-          final num luma = p.getLuminance();
-          final double shadow = (255 - luma) / 255.0;
+          // Cálculo manual de Luminancia corregido
+          final double luma = (0.299 * p.r + 0.587 * p.g + 0.114 * p.b);
+          final double shadow = (255.0 - luma) / 255.0;
           final double highlight = luma / 255.0;
           
-          // Sombras hacia Azul/Cian (Teal), Luces hacia Naranja (Orange)
           int r = (p.r + (highlight * 30 * job.intensity) - (shadow * 10 * job.intensity)).round().clamp(0, 255);
           int g = (p.g + (highlight * 10 * job.intensity) + (shadow * 10 * job.intensity)).round().clamp(0, 255);
           int b = (p.b - (highlight * 20 * job.intensity) + (shadow * 30 * job.intensity)).round().clamp(0, 255);
@@ -208,12 +199,8 @@ Uint8List executeProFilterIsolate(FilterJobPayload job) {
       break;
 
     case ProFilter.hdRestore:
-      final List<num> hdKernel = [
-         -1, -1, -1,
-         -1,  9, -1,
-         -1, -1, -1,
-      ];
-      final img.Image crisp = img.convolution(working, filter: hdKernel);
+      final List<num> hdKernel = [-1, -1, -1, -1, 9, -1, -1, -1, -1];
+      final img.Image crisp = img.convolution(img.Image.from(working), filter: hdKernel);
       for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
           final pOrig = working.getPixel(x, y);
@@ -252,7 +239,6 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
   bool _isProcessing = false;
   bool _showOriginalHold = false;
   
-  // Coordenadas para apuntar el filtro (0.0 a 1.0)
   double _targetX = -1.0; 
   double _targetY = -1.0;
 
@@ -265,7 +251,7 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
         _originalBytes = bytes;
         _processedBytes = bytes;
         _selectedFilter = ProFilter.original;
-        _targetX = -1.0; // Reset target
+        _targetX = -1.0; 
         _targetY = -1.0;
       });
     } catch (e) {
@@ -316,12 +302,10 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
 
   void _handleImageTap(TapUpDetails details, BoxConstraints constraints) {
     if (_isProcessing) return;
-    // Calcular coordenada relativa (0.0 a 1.0)
     setState(() {
       _targetX = details.localPosition.dx / constraints.maxWidth;
       _targetY = details.localPosition.dy / constraints.maxHeight;
     });
-    // Reaplicar filtro automáticamente al cambiar el objetivo
     if (_selectedFilter != ProFilter.original) {
       _applyFilter(_selectedFilter, _intensity);
     } else {
@@ -365,7 +349,6 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
       ),
       body: Column(
         children: [
-          // Banner de instrucción
           if (_originalBytes != null)
             Container(
               width: double.infinity,
@@ -394,11 +377,10 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
                           }
                         ),
                         
-                        // Mostrar cruz de objetivo
                         if (_targetX >= 0 && _targetY >= 0 && !_showOriginalHold)
                           Positioned(
                             left: MediaQuery.of(context).size.width * _targetX - 12,
-                            top: (MediaQuery.of(context).size.height - 300) * _targetY - 12, // Aproximación visual
+                            top: (MediaQuery.of(context).size.height - 300) * _targetY - 12,
                             child: const IgnorePointer(
                               child: Icon(Icons.gps_fixed, color: Colors.redAccent, size: 24),
                             ),
@@ -423,7 +405,6 @@ class _StudioEditorScreenState extends State<StudioEditorScreen> {
             ),
           ),
           
-          // Botón COMPRAR Reparado (Listener nativo)
           if (_originalBytes != null && _selectedFilter != ProFilter.original)
             Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
