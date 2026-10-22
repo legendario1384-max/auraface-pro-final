@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: 1. Checkout del código fuente
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 2. Configurar Java JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -50,14 +50,14 @@ jobs:
           flutter build apk --release --split-per-abi
 
       - name: 7. Subir APKs listos para descargar
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: AuraFace-Studio-Pro-APK
           path: build/app/outputs/flutter-apk/app-*-release.apk
 
       - name: 8. Publicar APK directamente en GitHub Releases
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: build/app/outputs/flutter-apk/app-*-release.apk
